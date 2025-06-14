@@ -7,6 +7,8 @@
 #include "cuda_runtime.h"
 #include "common.h"
 
+static int subflow_count = 10;
+
 void AlltoAllGetCollByteCount(size_t *sendcount, size_t *recvcount, size_t *paramcount, size_t *sendInplaceOffset, size_t *recvInplaceOffset, size_t count, size_t eltSize, int nranks) {
   *paramcount = (count/nranks) & -(16/eltSize);
   *sendcount = nranks*(*paramcount);
@@ -19,6 +21,7 @@ testResult_t AlltoAllInitData(struct threadArgs* args, ncclDataType_t type, nccl
   size_t sendcount = args->sendBytes / wordSize(type);
   size_t recvcount = args->expectedBytes / wordSize(type);
   int nranks = args->nProcs*args->nThreads*args->nGpus;
+  subflow_count = args->subflow_count;
 
   for (int i=0; i<args->nGpus; i++) {
     CUDACHECK(cudaSetDevice(args->gpus[i]));
@@ -55,9 +58,11 @@ testResult_t AlltoAllRunColl(void* sendbuff, void* recvbuff, size_t count, ncclD
   return testNcclError;
 #else
   NCCLCHECK(ncclGroupStart());
-  for (int r=0; r<nRanks; r++) {
-    NCCLCHECK(ncclSend(((char*)sendbuff)+r*rankOffset, count, type, r, comm, stream));
-    NCCLCHECK(ncclRecv(((char*)recvbuff)+r*rankOffset, count, type, r, comm, stream));
+  for (int r=0; r<nRanks; r+=subflow_count) {
+    for (int i = r; i < r + subflow_count; i++) {
+        NCCLCHECK(ncclSend(((char*)sendbuff)+r*rankOffset, count, type, i, comm, stream));
+        NCCLCHECK(ncclRecv(((char*)recvbuff)+r*rankOffset, count, type, i, comm, stream));
+    }
   }
   NCCLCHECK(ncclGroupEnd());
   return testSuccess;

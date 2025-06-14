@@ -87,6 +87,7 @@ static int streamnull = 0;
 static int timeout = 0;
 static int cudaGraphLaunches = 0;
 static int report_cputime = 0;
+static int subflow_count = 10;
 // Report average iteration time: (0=RANK0,1=AVG,2=MIN,3=MAX)
 static int average = 1;
 #if NCCL_VERSION_CODE >= NCCL_VERSION(2,19,0)
@@ -779,13 +780,14 @@ int main(int argc, char* argv[]) {
     {"report_cputime", required_argument, 0, 'C'},
     {"average", required_argument, 0, 'a'},
     {"local_register", required_argument, 0, 'R'},
+    {"subflows", required_argument, 0, 's'},
     {"help", no_argument, 0, 'h'},
     {}
   };
 
   while(1) {
     int c;
-    c = getopt_long(argc, argv, "t:g:b:e:i:f:n:m:w:N:p:c:o:d:r:z:y:T:hG:C:a:R:", longopts, &longindex);
+    c = getopt_long(argc, argv, "t:g:b:e:i:f:n:m:w:N:p:c:o:d:r:z:y:T:hG:C:a:R:s:", longopts, &longindex);
 
     if (c == -1)
       break;
@@ -888,6 +890,9 @@ int main(int argc, char* argv[]) {
         printf("Option -R (register) is not supported before NCCL 2.19. Ignoring\n");
 #endif
         break;
+      case 's':
+        subflow_count = (int)strtol(optarg, NULL, 0);
+        break;
       case 'h':
       default:
         if (c != 'h') printf("invalid option '%c'\n", c);
@@ -904,13 +909,14 @@ int main(int argc, char* argv[]) {
             "[-N,--run_cycles <cycle count> run & print each cycle (default: 1; 0=infinite)] \n\t"
             "[-p,--parallel_init <0/1>] \n\t"
             "[-c,--check <check iteration count>] \n\t"
-#if NCCL_VERSION_CODE >= NCCL_VERSION(2,11,0)
+            
+            #if NCCL_VERSION_CODE >= NCCL_VERSION(2,11,0)
             "[-o,--op <sum/prod/min/max/avg/mulsum/all>] \n\t"
-#elif NCCL_VERSION_CODE >= NCCL_VERSION(2,10,0)
+            #elif NCCL_VERSION_CODE >= NCCL_VERSION(2,10,0)
             "[-o,--op <sum/prod/min/max/avg/all>] \n\t"
-#else
+            #else
             "[-o,--op <sum/prod/min/max/all>] \n\t"
-#endif
+            #endif
             "[-d,--datatype <nccltype/all>] \n\t"
             "[-r,--root <root>] \n\t"
             "[-z,--blocking <0/1>] \n\t"
@@ -920,6 +926,7 @@ int main(int argc, char* argv[]) {
             "[-C,--report_cputime <0/1>] \n\t"
             "[-a,--average <0/1/2/3> report average iteration time <0=RANK0/1=AVG/2=MIN/3=MAX>] \n\t"
             "[-R,--local_register <0/1/2> enable local (1) or symmetric (2) buffer registration on send/recv buffers (default: disable (0))] \n\t"
+            "[-s,--subflow_count <number of subflows to split flow into>] \n\t"
             "[-h,--help]\n",
           basename(argv[0]));
         return 0;
@@ -934,6 +941,7 @@ int main(int argc, char* argv[]) {
 #ifdef MPI_SUPPORT
   MPI_Init(&argc, &argv);
 #endif
+  printf("Number of subflows requested: %d\n\t", subflow_count);
   TESTCHECK(run());
   return 0;
 }
@@ -1027,12 +1035,13 @@ testResult_t run() {
     int cudaDev = (gpu0 != -1 ? gpu0 : localRank*nThreads*nGpus) + i;
     int rank = proc*nThreads*nGpus+i;
     cudaDeviceProp prop;
+    printf("Here at Line 1038\n\t");
     CUDACHECK(cudaGetDeviceProperties(&prop, cudaDev));
     len += snprintf(line+len, MAX_LINE-len, "#  Rank %2d Group %2d Pid %6d on %10s device %2d [%04x:%02x:%02x] %s\n",
                     rank, color, getpid(), hostname, cudaDev, prop.pciDomainID, prop.pciBusID, prop.pciDeviceID, prop.name);
     maxMem = std::min(maxMem, prop.totalGlobalMem);
   }
-
+printf("Here at Line 1043\n\t");
 #if MPI_SUPPORT
   char *lines = (proc == 0) ? (char *)malloc(totalProcs*MAX_LINE) : NULL;
   // Gather all output in rank order to root (0)
@@ -1200,6 +1209,7 @@ testResult_t run() {
       TESTCHECK(threadLaunch(threads+t));
     else
       TESTCHECK(threads[t].func(&threads[t].args));
+    threads[t].args.subflow_count = subflow_count;
   }
 
   // Wait for other threads and accumulate stats and errors

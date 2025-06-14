@@ -142,6 +142,7 @@ struct threadArgs {
   int reportErrors;
 
   struct testColl* collTest;
+  int subflow_count;
 };
 
 typedef testResult_t (*threadFunc_t)(struct threadArgs* args);
