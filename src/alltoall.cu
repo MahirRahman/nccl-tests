@@ -52,8 +52,8 @@ testResult_t AlltoAllRunColl(void* sendbuff, void* recvbuff, size_t count, ncclD
   int nRanks;
   NCCLCHECK(ncclCommCount(comm, &nRanks));
   size_t rankOffset = count * wordSize(type);
-  size_t subflowOffset = (count / subflow_count) * wordSize(type);
-  size_t residualFlowCount = (count % subflow_count);
+  size_t subflowOffset = (count / subflow_count) * wordSize(type); // size of each subflow in buffer
+  size_t residualFlowCount = (count % subflow_count); // the number of flows remaining after sending subflow_count number of subflows
 
 
 #if NCCL_MAJOR < 2 || NCCL_MINOR < 7
@@ -63,10 +63,14 @@ testResult_t AlltoAllRunColl(void* sendbuff, void* recvbuff, size_t count, ncclD
   NCCLCHECK(ncclGroupStart());
   for (int r=0; r<nRanks; r++) {
     for (int i=0; i<subflow_count; i++) {
+        // Sending count/subflow_count number of subflows and incrementing the position in the buffer by
+        // a single subflow size each time.
         NCCLCHECK(ncclSend(((char*)sendbuff)+r*rankOffset+i*subflowOffset, count/subflow_count, type, r, comm, stream));
         NCCLCHECK(ncclRecv(((char*)recvbuff)+r*rankOffset+i*subflowOffset, count/subflow_count, type, r, comm, stream));
     }
     if (residualFlowCount>0) {
+        // If the number of flows is not a multiple of the number of subflows, then use one additional
+        // nccl send call to send the remaining data
         NCCLCHECK(ncclSend(((char*)sendbuff)+r*rankOffset+subflow_count*subflowOffset, residualFlowCount, type, r, comm, stream));
         NCCLCHECK(ncclRecv(((char*)recvbuff)+r*rankOffset+subflow_count*subflowOffset, residualFlowCount, type, r, comm, stream));
     }
