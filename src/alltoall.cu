@@ -52,16 +52,23 @@ testResult_t AlltoAllRunColl(void* sendbuff, void* recvbuff, size_t count, ncclD
   int nRanks;
   NCCLCHECK(ncclCommCount(comm, &nRanks));
   size_t rankOffset = count * wordSize(type);
+  size_t subflowOffset = (count / subflow_count) * wordSize(type);
+  size_t residualFlowCount = (count % subflow_count);
+
 
 #if NCCL_MAJOR < 2 || NCCL_MINOR < 7
   printf("NCCL 2.7 or later is needed for alltoall. This test was compiled with %d.%d.\n", NCCL_MAJOR, NCCL_MINOR);
   return testNcclError;
 #else
   NCCLCHECK(ncclGroupStart());
-  for (int r=0; r<nRanks; r+=subflow_count) {
-    for (int i = r; i < r + subflow_count; i++) {
-        NCCLCHECK(ncclSend(((char*)sendbuff)+r*rankOffset, count, type, i, comm, stream));
-        NCCLCHECK(ncclRecv(((char*)recvbuff)+r*rankOffset, count, type, i, comm, stream));
+  for (int r=0; r<nRanks; r++) {
+    for (int i=0; i<subflow_count; i++) {
+        NCCLCHECK(ncclSend(((char*)sendbuff)+r*rankOffset+i*subflowOffset, count/subflow_count, type, r, comm, stream));
+        NCCLCHECK(ncclRecv(((char*)recvbuff)+r*rankOffset+i*subflowOffset, count/subflow_count, type, r, comm, stream));
+    }
+    if (residualFlowCount>0) {
+        NCCLCHECK(ncclSend(((char*)sendbuff)+r*rankOffset+subflow_count*subflowOffset, residualFlowCount, type, r, comm, stream));
+        NCCLCHECK(ncclRecv(((char*)recvbuff)+r*rankOffset+subflow_count*subflowOffset, residualFlowCount, type, r, comm, stream));
     }
   }
   NCCLCHECK(ncclGroupEnd());
